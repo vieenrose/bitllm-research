@@ -62,10 +62,12 @@ def report(vocab, d_model, n_layers, n_heads, n_kv_heads, ffn_hidden,
     print(f"  embedding fraction    : {(emb+head)/total*100:5.1f}%")
     print(f"  deployed size         : {packed_mb:7.2f} MB   vs fp16 {fp16_mb:6.2f} MB "
           f"({fp16_mb/packed_mb:.1f}x smaller)  [emb@{emb_bits}b]")
-    # "effective capacity" heuristic: count fp params at full weight, ternary at 1.58/16
-    eff = (total - ternary_tf) + ternary_tf * (1.58 / 16)
-    print(f"  ~effective-capacity   : {eff/1e6:7.2f}M fp-equiv params "
-          f"({eff/total*100:4.1f}% of nominal)")
+    # QUALITY capacity (not memory!): the empirical rule is ternary ~= 0.5x fp
+    # params in quality (BitNet needs ~2x hidden to match fp16, 2407.09527), NOT
+    # the 1.58/16 memory ratio. fp/int8 params count ~fully.
+    quality_eff = (total - ternary_tf) + ternary_tf * 0.5
+    print(f"  ~quality-capacity     : {quality_eff/1e6:7.2f}M fp-equiv params "
+          f"(ternary@0.5x; {quality_eff/total*100:4.1f}% of nominal)")
     return total
 
 

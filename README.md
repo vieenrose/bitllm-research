@@ -84,9 +84,25 @@ scripts/
   train.py            # QAT pretraining (bf16, anneal, distill, ckpt)  [--smoke to test]
   eval.py             # per-language perplexity + ternary sparsity report
 configs/          # experiment configs
-docs/             # the research writeup + design
+docs/             # the research writeup + design + the applied training guide
+reference/        # drop-in code for the applied case study (SlothLM-E ternary)
 tests/            # torch-gated unit tests + pure-python budget test
 ```
+
+## Applied case study: a ternary Zhuyin IME encoder
+
+A worked application of this research to a real model — a 1.58-bit
+[SlothLM-E](https://huggingface.co/Luigi/slothlm-e-12m-zhuyin) (Zhuyin→Traditional
+Chinese input-method encoder) engineered to beat the deployed 12M int8 model:
+
+- **[docs/GUIDE_TERNARY_SLOTHLM_E.md](docs/GUIDE_TERNARY_SLOTHLM_E.md)** — the full,
+  standalone training runbook (arch, recipe, hyperparameters, eval, the ARM speed
+  gate) for someone with an RTX 5090.
+- **[reference/slothe_ternary/](reference/slothe_ternary/)** — a drop-in ternary
+  trainer (`train_slothe_ternary.py`) + gate (`gate_slothe_ternary.py`) that mirror
+  the `SlothE` architecture and checkpoint format: BitLinear (absmedian ternary +
+  int8 acts + STE + anneal + SubLN), mixed-precision islands, and 32M-teacher
+  distillation.
 
 ## Quickstart
 
