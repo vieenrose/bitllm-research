@@ -1,0 +1,55 @@
+# Sub-100M ternary zh/en SLM — reference config.
+# NOTE: "60m" refers to the TERNARY transformer core; total params incl. the
+# full-precision bilingual embedding+head land near ~100M (see scripts/plan_budget.py).
+# Tune after reading docs/DESIGN_SUB100M.md.
+
+model:
+  vocab_size: 48000
+  d_model: 512
+  n_layers: 20
+  n_heads: 8
+  n_kv_heads: 2          # GQA — cuts KV projection params
+  ffn_hidden: 1365       # ~8/3 * d_model for SwiGLU
+  max_seq_len: 2048
+  rope_theta: 10000.0
+  tie_embeddings: false  # keep fp head separate from fp embed (A/B this)
+  weight_bits: ternary
+  act_bits: 8
+  group_size: 0          # per-output-channel weight scale
+  fp_boundary_blocks: 1  # first & last block stay full precision
+
+data:
+  tokenizer_path: tokenizer/bitllm-zhen.json
+  packed_dir: data/packed
+  seq_len: 2048
+  seed: 1234
+  sources:
+    - name: HuggingFaceFW/fineweb-edu
+      config: sample-10BT
+      split: train
+      text_field: text
+      lang: en
+      weight: 0.5
+    - name: BAAI/CCI3-HQ            # high-quality Chinese web corpus (swap as available)
+      split: train
+      text_field: text
+      lang: zh
+      weight: 0.5
+
+train:
+  out_dir: checkpoints/small_60m
+  lr: 1.5e-3
+  min_lr: 1.5e-4
+  weight_decay: 0.1
+  warmup_steps: 2000
+  max_steps: 240000        # ~ tune to hit the target token budget
+  batch_tokens: 500000
+  micro_batch_size: 16
+  dtype: bfloat16
+  quant_anneal_start: 0.0
+  quant_anneal_end: 0.15   # fp warmup then ramp to full ternary by 15% of steps
+  distill: false
+  teacher_model: ""
+  log_every: 20
+  eval_every: 2000
+  ckpt_every: 4000

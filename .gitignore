@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# Data / model artifacts (keep the repo light; these live on the training box)
+data/**/*.bin
+data/**/*.arrow
+data/**/*.txt
+data/**/*.jsonl
+data/**/*.parquet
+data/cache/
+*.model
+*.vocab
+tokenizer/*.json
+checkpoints/
+runs/
+wandb/
+*.pt
+*.pth
+*.safetensors
+
+# Logs / misc
+*.log
+.DS_Store
+.ipynb_checkpoints/
+
+# Allow small tracked configs/samples even under ignored dirs
+!configs/**
+!data/README.md

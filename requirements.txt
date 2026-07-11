@@ -1,0 +1,20 @@
+# Core training stack (install on the GPU box)
+torch>=2.3
+numpy>=1.26
+
+# Data + tokenizer
+datasets>=2.19
+tokenizers>=0.19
+sentencepiece>=0.2.0
+transformers>=4.44          # for teacher models (distillation) + eval harness glue
+
+# Training utilities
+tqdm
+pyyaml
+wandb                       # optional experiment tracking (disable with WANDB_MODE=offline)
+
+# Evaluation
+lm-eval>=0.4.3              # optional: EleutherAI lm-evaluation-harness
+
+# Dev
+pytest
