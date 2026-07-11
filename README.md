@@ -15,39 +15,58 @@ training stack designed for the sub-100M regime, ready to drop onto a GPU box.
 ## TL;DR of the "why"
 
 Extreme quantization is a **capacity tax that scales with the model, not with the
-task**. Three forces make it hurt small models far more than large ones:
+task**. The measured ternary-vs-FP16 gap **shrinks with scale and crosses over at
+~1.3–3B** — which is exactly where the published wins (and PrismML's shipped
+1.7B/4B/8B "Bonsai" models) live:
 
-1. **Effective-parameter penalty.** Low-precision training reduces the *effective*
+| Size | ternary vs FP16 |
+|-----:|-----------------|
+| 6–48M | **+50–84% perplexity** (tiny-decoder study) |
+| 700M | +4% PPL / −1.2 acc pts (trails) |
+| 1.3B | ~0 (parity) |
+| 3B | **−0.13 PPL / +0.5 acc (ternary wins)** |
+
+Five compounding mechanisms drive this (full cited analysis in
+**[docs/WHY_1BIT_NEEDS_SCALE.md](docs/WHY_1BIT_NEEDS_SCALE.md)**); the three biggest:
+
+1. **Effective-parameter penalty.** Low-precision training cuts the *effective*
    parameter count — Kumar et al. (*Scaling Laws for Precision*, ICLR 2025) fit
-   `N_eff = N·(1 − e^(−P/γ))`. BitNet's own results show ternary needs roughly
-   **~2× the hidden size** to match FP16. A 3B model can spend that 2× and still be
-   small; a 50M model that must double its width is no longer sub-100M.
-2. **Redundancy runs out.** Large models are over-parameterized, so ternary
-   rounding error is absorbed by spare capacity. Sub-100M models are already
-   capacity-bound — every weight matters, so the same relative error hits harder.
-3. **The embedding tax inverts the compression story.** In a *bilingual* sub-100M
-   model the token embedding + LM head (which stay full precision) are **~45–60% of
-   all parameters** (see `scripts/plan_budget.py`). So only ~half the model is
-   actually ternarized, the ~8–10× size win collapses to **~1.5–2×**, and "1-bit"
-   barely describes the model. At >1B the transformer dwarfs the embeddings, so
-   ternarization delivers its full benefit.
+   `N_eff = N·(1 − e^(−P/γ))`; BitNet needs **~2× the hidden size** to match FP16. A
+   3B model can spend that 2×; a 50M model that must double its width isn't sub-100M.
+2. **Redundancy runs out.** Big models absorb ternary rounding error in spare
+   capacity; sub-100M models are capacity-bound, so the same relative error bites —
+   and pure binary sits below ParetoQ's **2→3-bit "reconstruction" cliff** (use
+   ternary, not binary).
+3. **The bilingual embedding tax inverts the compression story.** The full-precision
+   token embedding + LM head are **~20–40% of a sub-100M zh/en model** (Chinese needs
+   a big vocab). So only ~half the model is ternarized, the ~8–10× size win collapses
+   to **~3.8–5.2× deployed** (`scripts/plan_budget.py`), and "1-bit" barely describes
+   it. At >1B the transformer dwarfs the embeddings and 1-bit delivers fully.
 
-The full, cited analysis is in **[docs/WHY_1BIT_NEEDS_SCALE.md](docs/WHY_1BIT_NEEDS_SCALE.md)**.
+**"PRISM" = PrismML** (HF `prism-ml`, Apache-2.0 1-bit/1.58-bit "Bonsai" LLMs,
+Qwen3-derived GGUF `Q1_0` ≈1.125 bits/weight) — smallest text model **1.7B**,
+nothing sub-1B, confirming the ">1B only" observation.
 
 ## The sub-100M plan
 
-The counter-levers, in rough order of impact (full recipe in
+**Reframe the target: not FP16 parity (unrealistic sub-1B) but best capability-per-MB.**
+The recommended model is **Bonsai-Nano-90M** (`configs/bonsai_nano_90m.yaml`):
+~92M total (vocab 48k, d=512, 24 layers, GQA, tied int8 embeddings), ~48 MB deployed.
+Counter-levers in order of measured impact (full recipe in
 **[docs/DESIGN_SUB100M.md](docs/DESIGN_SUB100M.md)**):
 
-- **Mixed-precision islands** — keep embeddings, LM head, and the first/last blocks
-  full precision; ternarize the rest (`fp_boundary_blocks` in the config).
-- **Shrink the embedding tax** — a lean shared byte-level BPE vocab (32–48k) for
-  zh/en; measure fertility vs param cost with the planner.
-- **Distillation** from an fp teacher — soft targets buy back lost capacity.
-- **Over-training** — spend far more than Chinchilla-optimal tokens/param (BitNet's
-  2B4T used ~2000 tok/param); small models have the room to be over-trained cheaply.
-- **Progressive quantization annealing** — start near fp, anneal to full ternary to
-  tame straight-through-estimator noise at narrow width.
+1. **Distillation from a strong bilingual FP16 teacher** — the single biggest lever;
+   injects capacity the ~92M ternary student (≈55–60M fp-equivalent) can't hold.
+2. **Ternary {−1,0,+1}, not binary** — stay above the 2→3-bit cliff.
+3. **Widen ~2× vs an FP16 design** at the same param target (budget around `N_eff`).
+4. **QAT from scratch, never PTQ** (1-bit PTQ collapses to ~10²³ perplexity).
+5. **W1.58A8 mixed-precision islands** — int8 embeddings/head/activations + fp
+   boundary blocks; ternarize only the block matmuls (`fp_boundary_blocks`).
+6. **Over-train** ~500–2000 tok/param — safe and *beneficial* under QAT.
+7. **Compact ~48k bilingual byte-BPE** (a 32k vocab wrecks Chinese fertility; a
+   128k+ LLM tokenizer blows the budget).
+8. **Progressive fp→ternary annealing** + the BitNet stability recipe.
+9. **Ship the bitnet.cpp I2_S kernel** — the efficiency is only realized in-kernel.
 
 ## Layout
 
@@ -77,13 +96,13 @@ python scripts/plan_budget.py
 
 # 2. On the GPU box: install, then smoke-test the training graph on random data
 pip install -r requirements.txt
-python scripts/train.py --config configs/small_60m.yaml --smoke
+python scripts/train.py --config configs/bonsai_nano_90m.yaml --smoke
 
 # 3. Real run: tokenizer -> pack data -> train -> eval
 python scripts/train_tokenizer.py --zh_files ... --en_files ... --vocab_size 48000
-python scripts/prepare_data.py --config configs/small_60m.yaml
-python scripts/train.py --config configs/small_60m.yaml
-python scripts/eval.py --config configs/small_60m.yaml --ckpt checkpoints/small_60m/ckpt_20000.pt
+python scripts/prepare_data.py --config configs/bonsai_nano_90m.yaml
+python scripts/train.py --config configs/bonsai_nano_90m.yaml
+python scripts/eval.py --config configs/bonsai_nano_90m.yaml --ckpt checkpoints/bonsai_nano_90m/ckpt_20000.pt
 ```
 
 ## Key references
@@ -91,9 +110,14 @@ python scripts/eval.py --config configs/small_60m.yaml --ckpt checkpoints/small_
 - Kumar et al., *Scaling Laws for Precision*, arXiv:2411.04330 (ICLR 2025)
 - Ma et al., *The Era of 1-bit LLMs: BitNet b1.58*, arXiv:2402.17764
 - *BitNet b1.58 2B4T Technical Report*, arXiv:2504.12285
-- *ParetoQ: ... extreme low-bit*, arXiv:2502.02631
+- *1-bit AI Infra: BitNet b1.58 on CPUs (bitnet.cpp)*, arXiv:2410.16144
+- *ParetoQ: Scaling Laws in Extremely Low-bit Quantization*, arXiv:2502.02631
+- Nielsen & Schneider-Kamp, *BitNet b1.58 Reloaded* (tiny 100K–48M), arXiv:2407.09527
 - Liu et al., *MobileLLM*, arXiv:2402.14905
-- *Spectra: ternary LLMs (TriLM)*, arXiv:2407.12327
+- Kaushal et al., *Spectra / Spectra 1.1 (ternary TriLM)*, arXiv:2407.12327 / 2506.23025
+- Cui et al., *Chinese LLaMA/Alpaca* (zh tokenizer), arXiv:2304.08177
+
+Full, adversarially-verified reference list in **[docs/WHY_1BIT_NEEDS_SCALE.md](docs/WHY_1BIT_NEEDS_SCALE.md)**.
 
 _(docs/ contains the fully-cited version, expanded from an adversarially-verified
 literature sweep.)_

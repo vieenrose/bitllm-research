@@ -23,7 +23,16 @@ Target: **total** params < 100M, zh/en, ternary transformer + fp embed/head.
 - **Effective capacity is brutal**: an 82.5M nominal ternary model is ~28M fp-equivalent
   (33.8%). Over-training + distillation must buy this gap back.
 
-## Recommended anchor
-`vocab=32000, d_model=512, n_layers=24, n_heads=8, n_kv_heads=2, ffn=1365, tie=True,
- fp_boundary_blocks=1` → 82.5M total, 3.0× packed, ~56 MB on disk.
-Deep-and-thin (24 layers @ 512) follows MobileLLM. GQA (kv=2) trims KV params.
+## Recommended anchor (updated after the research sweep)
+Pure param-budget arithmetic prefers a 32k vocab (lower embedding tax), BUT the
+research shows a 32k Latin-centric vocab **wrecks Chinese token fertility** (each
+hanzi → 3–4 byte tokens; Chinese-LLaMA arXiv:2304.08177). The zh/en sweet spot is a
+slightly larger vocab whose embedding is kept **int8 at deploy**, so the tax is paid
+in bytes, not bits:
+
+**→ `configs/bonsai_nano_90m.yaml`**: `vocab=48000, d_model=512, n_layers=24,
+n_heads=8, n_kv_heads=2, ffn=1408, tie=True, fp_boundary_blocks=1` → **92.3M total,
+26.6% embedding, ~48 MB deployed (int8 emb) / ~36 MB (int4 emb)**. Deep-and-thin (24
+layers @ 512, MobileLLM) + GQA (kv=2). See `docs/DESIGN_SUB100M.md` for the full
+rationale. The 32k `lean-82m` preset remains a valid English-leaning / smallest-tax
+alternative to A/B against.

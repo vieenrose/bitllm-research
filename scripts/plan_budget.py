@@ -30,7 +30,7 @@ def transformer_params(d_model, n_layers, n_heads, n_kv_heads, ffn_hidden):
 
 
 def report(vocab, d_model, n_layers, n_heads, n_kv_heads, ffn_hidden,
-           tie_embeddings, fp_boundary_blocks):
+           tie_embeddings, fp_boundary_blocks, emb_bits=8):
     emb = vocab * d_model
     head = 0 if tie_embeddings else vocab * d_model
     tf_total = transformer_params(d_model, n_layers, n_heads, n_kv_heads, ffn_hidden)
@@ -41,14 +41,17 @@ def report(vocab, d_model, n_layers, n_heads, n_kv_heads, ffn_hidden,
     final_norm = d_model
     total = emb + head + tf_total + final_norm
 
-    # Effective bits: ternary weights ~1.58 bits, everything else fp16 (16 bits)
-    packed_bits = ternary_tf * 1.58 + (total - ternary_tf) * 16
+    # Deployed bits: ternary weights ~1.58 bits; embedding+head at emb_bits (int8/int4
+    # PTQ of the lookup table is ~lossless); remaining fp (boundary blocks, norms) 16 bits.
+    emb_params = emb + head
+    other_fp = total - ternary_tf - emb_params
+    packed_bits = ternary_tf * 1.58 + emb_params * emb_bits + other_fp * 16
     packed_mb = packed_bits / 8 / 1e6
     fp16_mb = total * 16 / 8 / 1e6
 
     print(f"\n=== config: vocab={vocab} d_model={d_model} n_layers={n_layers} "
           f"heads={n_heads}/kv{n_kv_heads} ffn={ffn_hidden} "
-          f"tie={tie_embeddings} fp_boundary={fp_boundary_blocks} ===")
+          f"tie={tie_embeddings} fp_boundary={fp_boundary_blocks} emb_bits={emb_bits} ===")
     print(f"  embedding params      : {emb/1e6:7.2f}M  ({emb/total*100:5.1f}%)")
     print(f"  lm_head params        : {head/1e6:7.2f}M  ({head/total*100:5.1f}%)")
     print(f"  transformer (total)   : {tf_total/1e6:7.2f}M  ({tf_total/total*100:5.1f}%)")
@@ -57,8 +60,8 @@ def report(vocab, d_model, n_layers, n_heads, n_kv_heads, ffn_hidden,
     print(f"  ---------------------------------------------")
     print(f"  TOTAL params          : {total/1e6:7.2f}M")
     print(f"  embedding fraction    : {(emb+head)/total*100:5.1f}%")
-    print(f"  packed size (ternary) : {packed_mb:7.2f} MB   vs fp16 {fp16_mb:6.2f} MB "
-          f"({fp16_mb/packed_mb:.1f}x smaller)")
+    print(f"  deployed size         : {packed_mb:7.2f} MB   vs fp16 {fp16_mb:6.2f} MB "
+          f"({fp16_mb/packed_mb:.1f}x smaller)  [emb@{emb_bits}b]")
     # "effective capacity" heuristic: count fp params at full weight, ternary at 1.58/16
     eff = (total - ternary_tf) + ternary_tf * (1.58 / 16)
     print(f"  ~effective-capacity   : {eff/1e6:7.2f}M fp-equiv params "
@@ -68,11 +71,14 @@ def report(vocab, d_model, n_layers, n_heads, n_kv_heads, ffn_hidden,
 
 PRESETS = {
     # name: (vocab, d_model, n_layers, n_heads, n_kv, ffn, tie, fp_boundary)
-    "tiny-30m":  (32000, 384, 16, 6, 2, 1024, True, 1),
-    "small-60m": (48000, 512, 20, 8, 2, 1365, False, 1),
-    "base-90m":  (64000, 640, 24, 10, 2, 1707, False, 1),
-    # A larger bilingual vocab variant to show the embedding-tax tradeoff
-    "zh-heavy":  (100000, 512, 24, 8, 2, 1365, False, 1),
+    # >>> RECOMMENDED (docs/DESIGN_SUB100M.md): ~92M total, tied int8 embeddings <<<
+    "bonsai-nano-90m": (48000, 512, 24, 8, 2, 1408, True, 1),
+    # Smaller/leaner points
+    "tiny-38m":  (32000, 384, 16, 6, 2, 1024, True, 1),
+    "lean-82m":  (32000, 512, 24, 8, 2, 1365, True, 1),
+    # Untied + big-vocab variants to SHOW the embedding tax (not recommended)
+    "untied-99m":  (32000, 512, 24, 8, 2, 1365, False, 0),
+    "zh-heavy-vocab": (100000, 512, 24, 8, 2, 1365, False, 1),
 }
 
 
@@ -86,12 +92,14 @@ def main():
     ap.add_argument("--ffn_hidden", type=int)
     ap.add_argument("--tie", action="store_true")
     ap.add_argument("--fp_boundary", type=int, default=1)
+    ap.add_argument("--emb_bits", type=int, default=8,
+                    help="deployed embedding/head bit-width (8=int8, 4=int4, 16=fp16)")
     args = ap.parse_args()
 
     if args.vocab:
         ffn = args.ffn_hidden or int(args.d_model * 8 / 3)
         report(args.vocab, args.d_model, args.n_layers, args.n_heads,
-               args.n_kv_heads, ffn, args.tie, args.fp_boundary)
+               args.n_kv_heads, ffn, args.tie, args.fp_boundary, args.emb_bits)
     else:
         print("No config given — showing presets:")
         for name, p in PRESETS.items():

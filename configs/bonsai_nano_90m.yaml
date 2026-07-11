@@ -1,0 +1,62 @@
+# Bonsai-Nano-90M — RECOMMENDED reference config (see docs/DESIGN_SUB100M.md)
+# ~92M total params: ~24.6M int8 tied embedding (27%) + ~67.6M ternary blocks (73%).
+# Deployed ~39MB (int8 emb) / ~27MB (int4 emb). Target: best capability-per-MB, not FP16 parity.
+
+model:
+  vocab_size: 48000        # compact bilingual byte-BPE; large enough for zh fertility
+  d_model: 512             # wide-for-depth (ternary ~2x-width rule)
+  n_layers: 24             # deep-and-thin (MobileLLM)
+  n_heads: 8
+  n_kv_heads: 2            # GQA
+  ffn_hidden: 1408         # ~2.75*d SwiGLU (mult. of 64)
+  max_seq_len: 2048
+  rope_theta: 10000.0
+  tie_embeddings: true     # #1 budget lever — don't pay for the head twice
+  ffn_activation: silu     # set 'relu2' for BitNet-2B4T-style activation sparsity
+  weight_bits: ternary
+  act_bits: 8              # W1.58A8 — do NOT push activations to 4-bit at this scale
+  group_size: 0            # per-output-channel absmean scale (I2_S-friendly)
+  fp_boundary_blocks: 1    # first & last block full precision (most sensitive)
+
+data:
+  tokenizer_path: tokenizer/bitllm-zhen.json
+  packed_dir: data/packed
+  seq_len: 2048
+  seed: 1234
+  sources:
+    - name: HuggingFaceFW/fineweb-edu
+      config: sample-100BT
+      split: train
+      text_field: text
+      lang: en
+      weight: 0.5
+    - name: BAAI/CCI3-HQ            # high-quality Chinese web (swap/add SkyPile, WanJuan as available)
+      split: train
+      text_field: text
+      lang: zh
+      weight: 0.5
+
+train:
+  out_dir: checkpoints/bonsai_nano_90m
+  # Over-train under QAT: ~500-2000 tok/param. At 92M params, 100B tokens ~= 1090 tok/param.
+  # With batch_tokens=500k, 100B tokens ~= 200k steps.
+  lr: 1.5e-3               # ternary tolerates large LR; two-stage schedule via cosine->min
+  min_lr: 0.0             # abrupt cooldown (BitNet two-stage LR spirit)
+  weight_decay: 0.1        # decayed toward 0 over training (two-stage WD)
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  warmup_steps: 2000
+  max_steps: 200000        # ~100B tokens @ 500k tok/step (~1090 tok/param)
+  batch_tokens: 500000
+  micro_batch_size: 16
+  dtype: bfloat16
+  quant_anneal_start: 0.0
+  quant_anneal_end: 0.15   # fp warmup then ramp to full ternary by 15% of steps
+  distill: true            # MANDATORY lever — set teacher below
+  teacher_model: Qwen/Qwen2.5-0.5B   # bilingual fp teacher (mind tokenizer alignment)
+  distill_alpha: 0.5
+  distill_temp: 2.0
+  log_every: 20
+  eval_every: 2000
+  ckpt_every: 4000

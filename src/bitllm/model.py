@@ -11,10 +11,13 @@ Design choices (justified in docs/WHY_1BIT_NEEDS_SCALE.md and docs/DESIGN_SUB100
   * Rotary position embeddings (RoPE); no learned positional table (saves params).
   * Grouped-query attention (optional) to cut KV projection params.
   * Deep-and-thin bias (MobileLLM finding: for a fixed budget, more layers /
-    smaller width beats fewer/wider at sub-1B).
-  * Untied embeddings by default: with a large bilingual vocab, tying forces the
-    fp head and fp embedding to share, which we found harmful; keep them separate
-    but both fp. (Config flag ``tie_embeddings`` lets you A/B this.)
+    smaller width beats fewer/wider at sub-1B) — but widened ~2x vs an FP16 design
+    at the same param target, since ternary needs ~2x hidden to recover effective
+    capacity (BitNet b1.58 Reloaded).
+  * TIED embeddings recommended for the bilingual sub-100M case: the full-precision
+    embedding is ~20-40% of the budget, so paying for a separate LM head is the
+    single most wasteful choice. Tying (MobileLLM's weight sharing) is the #1 budget
+    lever here. ``tie_embeddings`` lets you A/B it; the reference config ties.
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ class BitLMConfig:
     rope_theta: float = 10000.0
     norm_eps: float = 1e-5
     tie_embeddings: bool = False
+    ffn_activation: str = "silu"  # "silu" (SwiGLU) | "relu2" (gated squared-ReLU, BitNet 2B4T)
     # --- quantization controls ---
     weight_bits: str = "ternary"     # "ternary" | "fp"
     act_bits: int = 8
@@ -128,14 +132,28 @@ class Attention(nn.Module):
 
 
 class SwiGLU(nn.Module):
+    """Gated FFN. activation="silu" -> SwiGLU; "relu2" -> gated squared-ReLU.
+
+    Both keep the same 3-matrix (gate/up/down) param count so the budget is
+    unchanged. Squared-ReLU induces activation sparsity, which pairs well with the
+    int8 activation path (BitNet b1.58 2B4T uses a squared-ReLU FFN).
+    """
+
     def __init__(self, cfg: BitLMConfig, full_precision: bool):
         super().__init__()
         self.gate = _make_linear(cfg, cfg.d_model, cfg.ffn_hidden, full_precision)
         self.up = _make_linear(cfg, cfg.d_model, cfg.ffn_hidden, full_precision)
         self.down = _make_linear(cfg, cfg.ffn_hidden, cfg.d_model, full_precision)
+        self.act_kind = cfg.ffn_activation
+
+    def _act(self, x):
+        if self.act_kind == "relu2":
+            r = F.relu(x)
+            return r * r
+        return F.silu(x)
 
     def forward(self, x):
-        return self.down(F.silu(self.gate(x)) * self.up(x))
+        return self.down(self._act(self.gate(x)) * self.up(x))
 
 
 class Block(nn.Module):

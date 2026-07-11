@@ -1,7 +1,8 @@
-# Sub-100M ternary zh/en SLM — reference config.
-# NOTE: "60m" refers to the TERNARY transformer core; total params incl. the
-# full-precision bilingual embedding+head land near ~100M (see scripts/plan_budget.py).
-# Tune after reading docs/DESIGN_SUB100M.md.
+# Sub-100M ternary zh/en SLM — ALTERNATIVE/AblATION config (untied, 20 layers).
+# >>> The RECOMMENDED config is configs/bonsai_nano_90m.yaml <<<
+# This variant is kept for the tie-vs-untie A/B ablation (docs/DESIGN_SUB100M.md §7):
+# untied here => embed+head ~47% of params, only ~2x deployed shrink. "60m" refers to
+# the TERNARY core; total ~104M incl. the fp embedding+head (see scripts/plan_budget.py).
 
 model:
   vocab_size: 48000
