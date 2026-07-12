@@ -1,5 +1,15 @@
 # Guide: train a 1.58-bit (ternary) SlothLM-E that beats the 12M int8 Zhuyin model
 
+> **▶ RESULTS ARE IN — read [`RESULTS_SLOTHLM_E_TERNARY.md`](RESULTS_SLOTHLM_E_TERNARY.md) first.**
+> Two corrections to this guide: (1) the 免選字 targets below ("84%", "32M→86%")
+> came from a **LEAKED benchmark** (its sentences were sampled from the training
+> corpus — 174/174 verbatim); honest held-out numbers are ~12-18 pts lower.
+> (2) On honest data a **25M ternary already BEATS the 12M int8** (76 vs 72 免選字,
+> at ~half the size and ~1.5-2× faster) — the recipe here works; the goalposts
+> were just mismeasured. The results doc also reports the measured on-device
+> speed and argues the ~1.3B ternary-parity threshold is a *decoder* result that
+> encoders break (pending an fp control).
+
 **Audience:** an engineer/agent with this repo cloned and an **RTX 5090** in a
 separate project, who will train the model in the `slothing` / `slothlm-e`
 pipeline. This guide is the master handoff: it distills the research in this repo
