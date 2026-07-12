@@ -187,4 +187,9 @@ rigorous. **This fp control is the single most important next experiment.**
 - [ ] Full ggml port with legality-masked head — measured e2e latency, targets ~6–7 ms.
 - [x] TL1 vs I2_S settled: I2_S is faster on no-dotprod ARM; TL1 fixed (M>1
       segfault) but ~1.5× slower + untileable at our shapes. I2_S is optimal.
-- [ ] Feature-parity ternary (hints/context/typo) held-out gate — drop-in confirmation.
+- [x] Feature-parity ternary (hints/context/typo) held-out gate — **REGRESSED**:
+      homophone 84 / 免選字 66 / toneless 75. Homophone robustness best-in-class,
+      but whole-sentence 免選字 dropped 76→66 (below the 12M int8's 72). Likely
+      the typo-noise augmentation trading clean accuracy for typo robustness. The
+      PLAIN distilled ternary (76/83/81) stays the quality pick; a typo-noise-OFF
+      retrain is the isolation experiment.
