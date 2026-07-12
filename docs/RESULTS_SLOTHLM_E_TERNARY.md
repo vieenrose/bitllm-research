@@ -108,6 +108,16 @@ Deployed sizes (I2_S, our shapes): ternary **8.38 MB** vs int8-equivalent 24.75 
 (3× smaller) and *smaller than the shipped 12M int8's 12.38 MB* despite 2× the
 params. Effective **2.7 bits/param**.
 
+**Cross-platform (x86, Intel Core Ultra 7 155H, AVX_VNNI, same 24M dims, I2_S vs
+Q8_0):** pp12 3795 vs 2122 t/s (1.79×), pp32 1.53×, pp64 1.72× → **~1.7× ternary
+win on x86 too** (noisy ±20-30% on this tiny model + turbo; TL2, x86's tuned LUT
+kernel, untested). Absolute throughput ~15-20× the BOOX. **Key insight: the
+ternary advantage is partly MEMORY-BANDWIDTH, not just compute** — 2-bit weights
+move 4× fewer bytes than int8, and VNNI/dotprod accelerate int8 *compute* but not
+its *memory* traffic. So ternary wins on BOTH a no-dotprod ARM (~2.0×) and a
+VNNI x86 (~1.7×) — it is NOT a weak-CPU-only advantage. (This corrects an earlier
+assumption that int8 accelerators would erase the ternary lead.)
+
 ---
 
 ## 3. The Pareto picture: 25M ternary dominates both int8 models
