@@ -82,9 +82,21 @@ processing at batch=T = exactly our non-autoregressive forward.
 Linear fit (tight, <2% std): I2_S 0.85 ms/tok + 1.9 ms; Q8_0 1.80 ms/tok + 2.9 ms
 → **per-token block-matmul ternary speedup = 2.11×** (measured).
 
-- **TL1 (bitnet's *faster* LUT kernel) segfaults in this fork; I2_S (generic
-  2-bit path) works** — so 2.11× is a *floor*; a working TL1 + tiling tuned for
-  our small 352/960 matrices (bitnet's presets target 2B+) should beat it.
+- **On this no-dotprod SD662, I2_S IS the fast kernel — TL1 is ~1.5× *slower*
+  (measured, corrected premise).** We diagnosed + fixed TL1's M>1 segfault
+  (`ggml_bitnet_can_mul_mat` gated to single-token gemv → M>1 fell through to a
+  generic F32 matmul over 2-bit-packed data → overrun) and benchmarked it: on
+  the d125m dummy TL1 pp6/pp12 = 143/170 t/s vs I2_S 211/261 vs Q8_0 117/128
+  → **I2_S beats TL1 by ~1.5× at every size.** With dotprod OFF, this fork's
+  I2_S (integer-widening batched gemm) outruns TL1's table-lookup gemv. TL1
+  also *cannot tile our exact shapes* (codegen asserts bm∈{32,64}; our attn k/v
+  weight is [88,352] and 88 divides neither; the packer hardcodes BM=256, our
+  M∈{352,960,88} all fail). And I2_S has no per-shape tiling knob (generic ggml
+  gemm; only thread count, and t=4 is already optimal). **⇒ I2_S is already the
+  optimal ternary kernel on this device; 2.1× is the achievable kernel speedup,
+  not a floor to beat with TL1.** The remaining speed lever is MODEL-SIDE (the
+  legality-masked head, §3), not the kernel. (The "TL1 is faster" framing holds
+  on dotprod-capable CPUs — a real, non-obvious device dependency.)
 - **End-to-end is diluted by the head (labeled PROJECTED):** the real model is
   14 ternary + 2 fp blocks + a **per-position** int8 8342-way head that ternary
   can't accelerate (int8 in both). Corrected: ternary forward ≈ 1.22·T + 1.7 ms
@@ -163,5 +175,6 @@ rigorous. **This fp control is the single most important next experiment.**
 ## Open items
 - [ ] **fp control @ 25M** — confirm/refute the encoder-breaks-the-threshold claim.
 - [ ] Full ggml port with legality-masked head — measured e2e latency, targets ~6–7 ms.
-- [ ] Fix TL1 kernel + tune tiling for 352/960 — beat the 2.11× I2_S floor.
+- [x] TL1 vs I2_S settled: I2_S is faster on no-dotprod ARM; TL1 fixed (M>1
+      segfault) but ~1.5× slower + untileable at our shapes. I2_S is optimal.
 - [ ] Feature-parity ternary (hints/context/typo) held-out gate — drop-in confirmation.
